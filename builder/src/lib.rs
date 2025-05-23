@@ -4,8 +4,9 @@ use convert_case::Casing;
 use proc_macro2::{Span, TokenStream};
 use quote::{IdentFragment, ToTokens, quote};
 use syn::{
-    DataStruct, DeriveInput, Field, GenericArgument, Generics, Ident, Index, Lifetime, LitStr,
-    PathArguments, Type, Visibility, parse_macro_input, spanned::Spanned,
+    DataStruct, DeriveInput, Field, GenericArgument, Generics, Ident, Index, Lifetime,
+    LifetimeParam, LitStr, PathArguments, Type, TypeParam, Visibility, parse_macro_input,
+    spanned::Spanned,
 };
 #[cfg(feature = "inference")]
 mod inference;
@@ -45,6 +46,11 @@ pub fn macro_builder(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
 enum FieldIdent {
     Ident(Ident),
     Index(Index),
+}
+#[derive(Clone)]
+enum PhantomField<'a> {
+    Lifetime(&'a LifetimeParam),
+    Type(&'a TypeParam),
 }
 impl Display for FieldIdent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -352,7 +358,7 @@ impl BuilderField {
                 })
             }
             BuilderFieldType::Excluded => {
-                let conversion = quote! { #source_field_type::default() };
+                let conversion = quote! { <#source_field_type>::default() };
                 Ok(Self {
                     source_type: (source_field_type.into_token_stream(), source_field_ident),
                     builder_type: None,
@@ -658,22 +664,48 @@ impl ToTokens for BuilderInput {
                 }
             }
         };
-
+        let phantom_field_iter = self
+            .generics
+            .lifetimes()
+            .map(|value| PhantomField::Lifetime(value))
+            .chain(
+                self.generics
+                    .type_params()
+                    .map(|value| PhantomField::Type(value)),
+            );
         let builder_body = if *tuple {
-            for item in self.generics.lifetimes() {
-                fields.push(quote! {std::marker::PhantomData<& #item ()>}.to_token_stream());
+            for item in phantom_field_iter {
+                match item {
+                    PhantomField::Lifetime(item) => {
+                        fields
+                            .push(quote! {std::marker::PhantomData<& #item ()>}.to_token_stream());
+                    }
+                    PhantomField::Type(item) => {
+                        fields.push(quote! {std::marker::PhantomData<#item>}.to_token_stream());
+                    }
+                }
             }
             quote! { (#(#fields),*); }
         } else {
-            for (index, item) in self.generics.lifetimes().enumerate() {
+            for (index, item) in phantom_field_iter.enumerate() {
                 let phantom_field_ident = syn::Ident::new(
                     format!("___builder_field_{}", index).as_str(),
                     Span::call_site(),
                 );
-                fields.push(
-                    quote! {#phantom_field_ident: std::marker::PhantomData<& #item ()>}
-                        .to_token_stream(),
-                );
+                match item {
+                    PhantomField::Lifetime(item) => {
+                        fields.push(
+                            quote! {#phantom_field_ident: std::marker::PhantomData<& #item ()>}
+                                .to_token_stream(),
+                        );
+                    }
+                    PhantomField::Type(item) => {
+                        fields.push(
+                            quote! {#phantom_field_ident: std::marker::PhantomData<#item>}
+                                .to_token_stream(),
+                        );
+                    }
+                }
             }
             quote! { { #(#fields),* } }
         };
