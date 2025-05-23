@@ -4,8 +4,8 @@ use convert_case::Casing;
 use proc_macro2::{Span, TokenStream};
 use quote::{IdentFragment, ToTokens, quote};
 use syn::{
-    DataStruct, DeriveInput, Field, GenericArgument, Generics, Ident, Index, LitStr, PathArguments,
-    Type, Visibility, parse_macro_input, spanned::Spanned,
+    DataStruct, DeriveInput, Field, GenericArgument, Generics, Ident, Index, Lifetime, LitStr,
+    PathArguments, Type, Visibility, parse_macro_input, spanned::Spanned,
 };
 #[cfg(feature = "inference")]
 mod inference;
@@ -76,6 +76,7 @@ struct BuilderInput {
     vis: Visibility,
     tuple: bool,
 }
+
 impl BuilderInput {
     fn from_struct(
         ident: Ident,
@@ -657,9 +658,23 @@ impl ToTokens for BuilderInput {
                 }
             }
         };
+
         let builder_body = if *tuple {
+            for item in self.generics.lifetimes() {
+                fields.push(quote! {std::marker::PhantomData<& #item ()>}.to_token_stream());
+            }
             quote! { (#(#fields),*); }
         } else {
+            for (index, item) in self.generics.lifetimes().enumerate() {
+                let phantom_field_ident = syn::Ident::new(
+                    format!("___builder_field_{}", index).as_str(),
+                    Span::call_site(),
+                );
+                fields.push(
+                    quote! {#phantom_field_ident: std::marker::PhantomData<& #item ()>}
+                        .to_token_stream(),
+                );
+            }
             quote! { { #(#fields),* } }
         };
         quote! {

@@ -34,8 +34,6 @@ pub(crate) fn infer_type<'a>(input: &Type, attrs: &mut BuilderFieldAttrs<'a>) {
                                 || matches_type_path(["std", "str"], &value)
                             {
                                 attrs.into = true;
-                            } else {
-                                attrs.unwrap = true;
                             }
                         }
                         Type::Slice(_) => {
